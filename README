@@ -10,7 +10,7 @@ The works like this: when deploying the replicate, puppet starts a script that d
 - perform some treatments (mainly apply binlog), CHANGE MASTER ...
 - restart mysql
 
-The -m option can be use to also make a CHANGE MASTER on the master after the creation of the replica: it is helpful if both servers are in circular replication (aka master / master).
+The -m option can be used to also make a CHANGE MASTER on the master after the creation of the replica: it is helpful if both servers are in circular replication (aka master / master).
 
 I have only tested on debian/squeeze but other distro should need not need more than some path fixes.
 
@@ -33,6 +33,6 @@ The script allows you to use SSH (-s option) instead of xinetd but I have not so
 
 Attention, I'm not very hostile environment, the security mechanisms are quite light (a common secret to authenticate) and a simple allow_from in the xinetd conf.
 
-That's it. Nothing complicated in and the puppet is absolutely not mandatory.
+That's it. Nothing complicated in and puppet is absolutely not mandatory.
 
 HTH.
