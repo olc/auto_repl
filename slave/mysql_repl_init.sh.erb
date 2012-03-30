@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -x
 
 SECRET='<%= scope.lookupvar('mysql::server::repl_xinetd_svr_secret') %>' 
 MASTER_HOST='<%= mysql_replication['master'] %>'
@@ -6,6 +6,7 @@ MASTER_USER='<%= scope.lookupvar('mysql::server::repl_user') %>'
 MASTER_PASSWORD='<%= scope.lookupvar('mysql::server::repl_password') %>'
 EXTRABACKUP=
 PORT=18145
+HOME=/root
 
 usage () {
 	echo ""
@@ -55,7 +56,7 @@ if [ "$STATUS" = "OK" ] ; then
 	if [ "$LOG_FILE" != "" ] && [ "$LOG_POS" != "" ] ; then
 		echo "Applying master binlog info..."
 		(su mysql -s /bin/sh -c '/usr/sbin/mysqld --skip-slave-start 2>/dev/null' &)
-		sleep 5
+		sleep 10	# Starting mysql could be a bit long
 		mysql -e "CHANGE MASTER TO MASTER_HOST='$MASTER_HOST', MASTER_USER='$MASTER_USER', MASTER_PASSWORD='$MASTER_PASSWORD', MASTER_LOG_FILE='$LOG_FILE', MASTER_LOG_POS=$LOG_POS;"
 		pkill -KILL mysqld 1>/dev/null 2>&1
 		sleep 5
