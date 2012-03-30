@@ -1,0 +1,38 @@
+Create a rMySQL eplica is not a complex operation but as I prefer watching Puppet do it for me, I made some piece of scripts in order to automate this.
+
+It is based to the great xtrabackup tools of Percona (works with any MySQL version> = 5), which allows to hot backup a MySQL server (MyISAM and InnoDB are supported).
+
+The works like this: when deploying the replicate, puppet starts a script that does the following:
+
+- stop mysql
+- rm /var/lib/mysql (I do not backup)
+- get hot backup on the master via xinetd/netcat
+- perform some treatments (mainly apply binlog), CHANGE MASTER ...
+- restart mysql
+
+The -m option can be use to also make a CHANGE MASTER on the master after the creation of the replica: it is helpful if both servers are in circular replication (aka master / master).
+
+I have only tested on debian/squeeze but other distro should need not need more than some path fixes.
+
+Master side:
+xinetd.conf 
+xinet_mysql_repl_srv.sh (/opt/puppet/bin/xinet_mysql_repl_srv.sh in my case)
+
+Slave side:
+mysql_repl_init.sh
+
+(In case of circular replication, please drops eveything on each server)
+
+On slave server (here's a percona 5.5), the following command will populate mysql data, then set CHANGE MASTER also on the master (master-master, or circular replication):
+
+# mysql_repl_init.sh -f -m -x xtrabackup
+
+Launch "mysql_repl_init.sh -h" to get a short help.
+
+The script allows you to use SSH (-s option) instead of xinetd but I have not so much tested it (especially because it's faster via netcat/xinetd).
+
+Attention, I'm not very hostile environment, the security mechanisms are quite light (a common secret to authenticate) and a simple allow_from in the xinetd conf.
+
+That's it. Nothing complicated in and the puppet is absolutely not mandatory.
+
+HTH.
