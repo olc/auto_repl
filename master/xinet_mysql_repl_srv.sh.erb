@@ -1,0 +1,71 @@
+#!/bin/bash
+
+# Parameters
+SECRET='<%= scope.lookupvar('mysql::server::repl_xinetd_svr_secret') %>'
+MASTER_USER='<%= scope.lookupvar('mysql::server::repl_user') %>'
+MASTER_PASSWORD='<%= scope.lookupvar('mysql::server::repl_password') %>'
+
+read CREDENTIALS
+set $CREDENTIALS
+
+if [ "$#" -lt "3" ] ; then
+	echo "Wrong number of arguments."
+	exit 1
+fi
+
+TIMESTAMP=$1
+KEY=$2
+COMMAND=$3
+LOG_FILE=$4
+LOG_POS=$5
+
+# Check credentials
+NOW=$(date +%s)
+TIME_DIFF=$(echo $((TIMESTAMP-NOW)) |sed 's/-//')
+if [ "$TIME_DIFF" -gt 3600 ] ; then
+	echo 'Out of time window.'
+	exit 1
+fi
+
+mkdir -p /var/local/replica
+if [ -e /var/local/replica/$TIMESTAMP ] ; then
+	echo "Timestamp already used."
+	exit 1
+fi
+touch /var/local/replica/$TIMESTAMP
+
+if [ "$KEY" != "$(echo "${TIMESTAMP}${SECRET}" |sha1sum |cut -d' ' -f1)" ] ; then
+	echo "Bad credentials."
+	exit 1
+fi
+
+HOME=/root
+case "$COMMAND" in
+	STOP_SLAVE)
+		logger -t xtrabackup "Stopping SLAVE ordered by $REMOTE_HOST..."
+		mysql -e "SLAVE STOP;"
+		if [ "$?" = "0" ] ; then
+			echo "OK"
+		else
+			echo "KO"
+		fi
+		;;
+	BACKUP)
+		logger -t xtrabackup "Delivering MySQL xtrabackup to $REMOTE_HOST..."
+		innobackupex --slave-info --stream=tar ./ 2>/dev/null
+		;;
+	START_SLAVE)
+		if [ "$LOG_FILE" = "" ] || [ "$LOG_POS" = "" ] ; then
+			echo "START_SLAVE: LOG_FILE and/or LOG_POS arguments missing."
+			exit 1
+		fi
+		logger -t xtrabackup "Starting SLAVE to $REMOTE_HOST with $LOG_FILE at $LOG_POS..."
+		mysql -e "CHANGE MASTER TO MASTER_HOST='$REMOTE_HOST', MASTER_USER='$MASTER_USER', MASTER_PASSWORD='$MASTER_PASSWORD', MASTER_LOG_FILE='$LOG_FILE', MASTER_LOG_POS=$LOG_POS; START SLAVE;"
+		if [ "$?" = "0" ] ; then
+			echo "OK"
+		else
+			echo "KO"
+		fi
+		;;
+esac
+exit 0

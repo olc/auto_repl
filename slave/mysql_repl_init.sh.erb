@@ -1,0 +1,134 @@
+#!/bin/bash
+
+SECRET='<%= scope.lookupvar('mysql::server::repl_xinetd_svr_secret') %>' 
+MASTER_HOST='<%= mysql_replication['master'] %>'
+MASTER_USER='<%= scope.lookupvar('mysql::server::repl_user') %>'
+MASTER_PASSWORD='<%= scope.lookupvar('mysql::server::repl_password') %>'
+EXTRABACKUP=
+PORT=18145
+
+usage () {
+	echo ""
+	echo "USAGE: "
+	echo "  $0 -x <xtrabackup binary> [-s -l <login> -p <password> ] [-h] [-m] [-f]"
+	echo "    -x  specify which xtrabackup binary to use (can be one of xtrabackup_51, xtrabackup, xtrabackup_55)"
+	echo "        see: http://www.percona.com/doc/percona-xtrabackup/xtrabackup_bin/choosing_binary.html"
+	echo "    -s  use SSH instead of netcat"
+	echo "    -l  SSH user login"
+	echo "    -p  SSH user account"
+        echo "    -m  master-master, do the needed stuff to the remote server in order to sync circular replication"
+	echo "    -f  don't ask anythink"
+	exit 1
+}
+
+while getopts 'x:l:p:shmf' OPT; do
+	case $OPT in
+		x) EXTRABACKUP=$OPTARG ;;
+		s)  USE_SSH=yes ;;
+		l)  SSH_LOGIN=$OPTARG ;;
+		p)  SSH_PASSWD=$OPTARG ;;
+		m)  MASTER_MASTER=yes ;;
+		f)  FORCE=yes ;;
+		*)  usage ;;
+	esac
+done
+
+case $EXTRABACKUP in
+	xtrabackup_51|xtrabackup|xtrabackup_55) ;;
+	*) echo "-x missing or incorrrect." ; usage ;;
+esac	
+
+if [ "$USE_SSH" = "yes" ] ; then
+	if [ "$SSH_LOGIN" = "" ] || [ "$SSH_PASSWD" = "" ] ; then
+		usage
+	fi
+	if [ "$MASTER_MASTER" = "yes" ] ; then
+		echo "This mode is currently not supported in SSH mode. Contributions welcome!"
+		exit 1
+	fi
+	TMPFILE=$(mktemp)
+	trap "rm -f $TMPFILE; exit" INT TERM EXIT
+fi
+
+if [ "$FORCE" != "yes" ] ; then
+	echo "This will destroy all data currently manager by mysql. Continue (y/N)?"
+	read CONFIRMATION
+	[ "$CONFIRMATION" = "y" ] || exit 0
+fi
+
+if [ ! -d /var/lib/mysql ] ; then
+	echo "Could not find /var/lib/mysql. Exiting."
+	exit 1
+fi
+
+/etc/init.d/mysql stop >/dev/null
+
+cd /var/lib/mysql || exit 1
+rm -rf /var/lib/mysql/*
+#rm -rf /var/log/mysql/
+
+STATUS=
+if [ "$USE_SSH" = "yes" ] ; then
+	TMPFILE=$(mktemp)
+	trap "rm -f $TMPFILE; exit" INT TERM EXIT
+	echo "Importing mysql data from master..."
+	SSHPASS="$SSH_PASSWD" sshpass -e ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 $SSH_LOGIN@$MASTER_HOST 'innobackupex --slave-info --stream=tar ./' 2>$TMPFILE |tar xfi -
+	if grep 'completed OK!' $TMPFILE >/dev/null ; then
+		STATUS=OK
+	fi
+else
+	if [ "$MASTER_MASTER" = "yes" ] ; then
+		NOW=$(date +%s)
+		KEY=$(echo "${NOW}${SECRET}" |sha1sum |cut -d' ' -f1)
+		echo "Stopping slave at remote server..."
+		echo "$NOW $KEY STOP_SLAVE" |nc $MASTER_HOST $PORT |grep OK
+		[ "$?" = "0" ] || exit 1
+		sleep 2
+	fi
+	NOW=$(date +%s)
+	KEY=$(echo "${NOW}${SECRET}" |sha1sum |cut -d' ' -f1)
+	echo "Importing mysql data from master..."
+	echo "$NOW $KEY BACKUP" |nc $MASTER_HOST $PORT |tar xfi -
+	if [ "$?" = "0" ] ; then
+		STATUS=OK
+	fi
+fi
+
+if [ "$STATUS" = "OK" ] ; then
+	echo "Backup imported, now applying transaction logs..."
+	innobackupex --apply-log --ibbackup=$EXTRABACKUP ./ 2>/dev/null
+	chown -R mysql:mysql /var/lib/mysql
+	set $(cat /var/lib/mysql/xtrabackup_binlog_info)
+	LOG_FILE=$1
+	LOG_POS=$2
+	if [ "$LOG_FILE" != "" ] && [ "$LOG_POS" != "" ] ; then
+		echo "Applying master binlog info..."
+		(su mysql -s /bin/sh -c '/usr/sbin/mysqld --skip-slave-start 2>/dev/null' &)
+		sleep 5
+		mysql -e "CHANGE MASTER TO MASTER_HOST='$MASTER_HOST', MASTER_USER='$MASTER_USER', MASTER_PASSWORD='$MASTER_PASSWORD', MASTER_LOG_FILE='$LOG_FILE', MASTER_LOG_POS=$LOG_POS; START SLAVE;"
+		pkill -KILL mysqld 1>/dev/null 2>&1
+		sleep 5
+		/etc/init.d/mysql start 
+		mysql -e 'START SLAVE;'
+	else
+		echo "No Master binlog info: skipping setting up replication."
+		/etc/init.d/mysql start
+	fi
+	if [ "$USE_SSH" != "yes" ] && [ "$MASTER_MASTER" = "yes" ] ; then
+		sleep 30	# Wait a bit in order to have a coherent Master Status
+		set $(echo 'show master status' |mysql -N)
+		NOW=$(date +%s)
+		KEY=$(echo "${NOW}${SECRET}" |sha1sum |cut -d' ' -f1)
+		if [ "$#" = "2" ] ; then
+			echo "Setting up circular replication at remote server..."
+			sleep 10
+			echo "$NOW $KEY START_SLAVE $1 $2" |nc $MASTER_HOST $PORT |grep OK
+			[ "$?" = "0" ] || exit 1
+		fi
+	fi
+	echo "Import completed OK."
+else
+	echo "Error during backup import. Exiting."
+	cd /
+	/etc/init.d/mysql start
+fi
