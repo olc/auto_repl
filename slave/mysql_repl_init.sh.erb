@@ -18,6 +18,55 @@ usage () {
 	echo "    -l  SSH user login"
 	echo "    -p  SSH user account"
         echo "    -m  master-master, do the needed stuff to the remote server in order to sync circular replication"
+	echo "    -f  don't ask anythink"
+	exit 1
+}
+
+while getopts 'x:l:p:shmf' OPT; do
+	case $OPT in
+		x) EXTRABACKUP=$OPTARG ;;
+		s)  USE_SSH=yes ;;
+		l)  SSH_LOGIN=$OPTARG ;;
+		p)  SSH_PASSWD=$OPTARG ;;
+		m)  MASTER_MASTER=yes ;;
+		f)  FORCE=yes ;;
+		*)  usage ;;
+	esac
+done
+
+case $EXTRABACKUP in
+	xtrabackup_51|xtrabackup|xtrabackup_55) ;;
+	*) echo "-x missing or incorrrect." ; usage ;;
+esac	
+
+if [ "$USE_SSH" = "yes" ] ; then
+	if [ "$SSH_LOGIN" = "" ] || [ "$SSH_PASSWD" = "" ] ; then
+		usage
+	fi
+	if [ "$MASTER_MASTER" = "yes" ] ; then
+		echo "This mode is currently not supported in SSH mode. Contributions welcome!"
+		exit 1
+	fi
+	TMPFILE=$(mktemp)
+	trap "rm -f $TMPFILE; exit" INT TERM EXIT
+fi
+
+if [ "$FORCE" != "yes" ] ; then
+	echo "This will destroy all data currently manager by mysql. Continue (y/N)?"
+	read CONFIRMATION
+	[ "$CONFIRMATION" = "y" ] || exit 0
+fi
+
+if [ ! -d /var/lib/mysql ] ; then
+	echo "Could not find /var/lib/mysql. Exiting."
+	exit 1
+fi
+
+/etc/init.d/mysql stop >/dev/null
+
+cd /var/lib/mysql || exit 1
+rm -rf /var/lib/mysql/*
+rm -rf /var/log/mysql/mysql-bin.*
 
 STATUS=
 if [ "$USE_SSH" = "yes" ] ; then
