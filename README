@@ -36,3 +36,8 @@ Attention, I'm not very hostile environment, the security mechanisms are quite l
 That's it. Nothing complicated in and puppet is absolutely not mandatory.
 
 HTH.
+
+Usefull links:
+http://www.percona.com/doc/percona-xtrabackup/
+http://vitobotta.com/painless-hot-backups-mysql-live-databases-percona-xtrabackup/
+http://www.dctrwatson.com/2010/07/taking-a-hot-backup-of-a-mysql-database-with-xtrabackup/
